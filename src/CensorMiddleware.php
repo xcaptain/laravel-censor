@@ -52,8 +52,13 @@ class CensorMiddleware
      */
     private function prepareDictionary()
     {
-        $replaceDict = Config::get('censor.replace', []);
-        $redactDict  = Config::get('censor.redact', []);
+        if (function_exists('Config::get')) {
+            $replaceDict = Config::get('censor.replace', []);
+            $redactDict  = Config::get('censor.redact', []);
+        } else {
+            $replaceDict = config('censor.replace', []);
+            $redactDict  = config('censor.redact', []);
+        }
 
         $replaceDictKeys   = array_keys($replaceDict);
         $replaceDictValues = array_values($replaceDict);
@@ -93,8 +98,8 @@ class CensorMiddleware
         $replaceables = array_merge($replaceables, $this->redactDict);
 
         // Word boundary and word matching regex
-        $replaceables = '\b' . implode('\b|\b', $replaceables) . '\b';
-        $regex        = '/>(?:[^<]*?(' . $replaceables . ')[^<]*?)</i';
+        $replaceables = implode('|', $replaceables);
+        $regex        = '/(' . $replaceables . ')/iu';
 
         // Make the keys lower case so that it is easy to lookup
         // the replacements
@@ -102,25 +107,51 @@ class CensorMiddleware
         $toRedact  = $this->redactDict;
 
         // Find all the matches and keep redacting/replacing
-        $source = preg_replace_callback($regex, function ($match) use ($toReplace, $toRedact) {
+        if (($arr = json_decode($source, true)) !== null) {
+            $myfunc = function (&$value, $key) use (&$myfunc, $toRedact, $toReplace, $regex) {
+                if (is_array($value)) {
+                    array_walk($value, $myfunc);
+                } else {
+                    $value = preg_replace_callback($regex, function ($match) use ($toReplace, $toRedact) {
+                        $temp = strtolower($match[1]);
+                        // If we have to replace it
+                        if (isset($toReplace[$temp])) {
+                            return str_replace($match[1], $toReplace[$temp], $match[0]);
+                        } elseif ($regexKey = $this->getReplaceRegexKey($temp)) { // Get the key i.e. pattern of the replace dictionary
+                            return str_replace($match[1], $toReplace[$regexKey], $match[0]);
+                        } elseif ($this->_inArray($temp, $toRedact) || $this->getRedactRegexKey($temp)) {  // If it matches a word or pattern to redact
+                            $replaceWith = str_repeat('*', strlen($temp));
 
-            $temp = strtolower($match[1]);
+                            return str_replace($match[1], $replaceWith, $match[0]);
+                        } else {
+                            return $match[0];
+                        }
 
-            // If we have to replace it
-            if (isset($toReplace[$temp])) {
-                return str_replace($match[1], $toReplace[$temp], $match[0]);
-            } elseif ($regexKey = $this->getReplaceRegexKey($temp)) { // Get the key i.e. pattern of the replace dictionary
-                return str_replace($match[1], $toReplace[$regexKey], $match[0]);
-            } elseif ($this->_inArray($temp, $toRedact) || $this->getRedactRegexKey($temp)) {  // If it matches a word or pattern to redact
-                $replaceWith = str_repeat('*', strlen($temp));
+                    }, $value);
+                }
+            };
+            array_walk($arr, $myfunc);
+            $source = json_encode($arr);
+        } else {
+            $source = preg_replace_callback($regex, function ($match) use ($toReplace, $toRedact) {
 
-                return str_replace($match[1], $replaceWith, $match[0]);
-            } else {
-                return $match[0];
-            }
+                $temp = strtolower($match[1]);
 
-        }, $source);
+                // If we have to replace it
+                if (isset($toReplace[$temp])) {
+                    return str_replace($match[1], $toReplace[$temp], $match[0]);
+                } elseif ($regexKey = $this->getReplaceRegexKey($temp)) { // Get the key i.e. pattern of the replace dictionary
+                    return str_replace($match[1], $toReplace[$regexKey], $match[0]);
+                } elseif ($this->_inArray($temp, $toRedact) || $this->getRedactRegexKey($temp)) {  // If it matches a word or pattern to redact
+                    $replaceWith = str_repeat('*', strlen($temp));
 
+                    return str_replace($match[1], $replaceWith, $match[0]);
+                } else {
+                    return $match[0];
+                }
+
+            }, $source);
+        }
         return $source;
     }
 

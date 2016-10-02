@@ -23,9 +23,13 @@ class LaravelCensorServiceProvider extends ServiceProvider
      */
     public function boot()
     {
-        $this->publishes([
-            __DIR__ . '/../config/censor.php' => config_path('censor.php')
-        ], 'config');
+        if ($this->app instanceof LaravelApplication && $this->app->runningInConsole()) {
+            $this->publishes([
+                __DIR__ . '/../config/censor.php' => '/var/www/wanuq-api/config/censor.php'
+            ], 'config');
+        } elseif ($this->app instanceof LumenApplication) {
+            $this->app->configure('taobaotop');
+        }
     }
 
     /**
